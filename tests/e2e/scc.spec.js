@@ -2,14 +2,17 @@ const { test, expect } = require("@playwright/test");
 const { pathToFileURL } = require("url");
 const path = require("path");
 
-const email = "nicholas@workforce.local";
-const password = "scc2026";
+const accounts = {
+  nicholas: { email: "nicholas@workforce.local", password: "Admin123!", heading: "Nicholas - Admin" },
+  jordan: { email: "jordan@workforce.local", password: "Employee123!", heading: "Jordan - Employee" },
+  amiru: { email: "amiru@workforce.local", password: "Employee123!", heading: "Amiru - Employee" }
+};
 const appUrl = process.env.APP_URL || pathToFileURL(path.join(__dirname, "..", "..", "index.html")).href;
 
-async function login(page) {
+async function login(page, account = accounts.nicholas) {
   await page.goto(appUrl);
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(password);
+  await page.getByLabel("Email").fill(account.email);
+  await page.getByLabel("Password").fill(account.password);
   await page.getByRole("button", { name: "Login" }).click();
   await expect(page.getByRole("heading", { name: "Weekly Schedule Builder" })).toBeVisible();
 }
@@ -26,26 +29,83 @@ test.beforeEach(async ({ page }) => {
   await page.evaluate(() => localStorage.clear());
 });
 
-test("login, invalid login, logout and refresh session work", async ({ page }) => {
+test("Nicholas login, invalid login, logout and refresh session work", async ({ page }) => {
   const errors = [];
   page.on("pageerror", (err) => errors.push(err.message));
   await page.goto(appUrl);
+  await expect(page.getByText("Seed access")).toHaveCount(0);
+  await expect(page.getByText("Leading and trailing password spaces are ignored.")).toBeVisible();
+  await expect(page.getByLabel("Password")).toHaveAttribute("type", "password");
+  await page.getByRole("button", { name: "Show" }).click();
+  await expect(page.getByLabel("Password")).toHaveAttribute("type", "text");
+  await page.getByRole("button", { name: "Hide" }).click();
+  await expect(page.getByLabel("Password")).toHaveAttribute("type", "password");
   await page.getByLabel("Email").fill("wrong@workforce.local");
   await page.getByLabel("Password").fill("bad");
   await page.getByRole("button", { name: "Login" }).click();
-  await expect(page.getByText("Invalid email or password.")).toBeVisible();
-  await page.getByLabel("Email").fill(email);
-  await expect(page.getByText("Invalid email or password.")).toHaveCount(0);
-  await page.getByLabel("Password").fill(password);
+  await expect(page.getByText("Incorrect email or password.")).toBeVisible();
+  await page.getByLabel("Email").fill(accounts.nicholas.email);
+  await expect(page.getByText("Incorrect email or password.")).toHaveCount(0);
+  await page.getByLabel("Password").fill(accounts.nicholas.password);
   await page.getByRole("button", { name: "Login" }).click();
   await page.reload();
   await expect(page.getByRole("heading", { name: "Weekly Schedule Builder" })).toBeVisible();
+  await expect(page.getByText(accounts.nicholas.heading)).toBeVisible();
   if (page.viewportSize().width <= 720) {
     await expect(page.getByRole("button", { name: "Mon" })).toBeVisible();
   }
   expect(errors).toEqual([]);
   await page.getByRole("button", { name: "Logout" }).click();
   await expect(page.getByRole("button", { name: "Login" })).toBeVisible();
+});
+
+test("Jordan and Amiru can log in with employee accounts", async ({ page }) => {
+  await login(page, accounts.jordan);
+  await expect(page.getByText(accounts.jordan.heading)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Publish Schedule" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Logout" }).click();
+  await login(page, accounts.amiru);
+  await expect(page.getByText(accounts.amiru.heading)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Publish Schedule" })).toHaveCount(0);
+});
+
+test("email normalization and password validation work", async ({ page }) => {
+  await page.goto(appUrl);
+  await page.getByLabel("Email").fill("  NICHOLAS@WORKFORCE.LOCAL  ");
+  await page.getByLabel("Password").fill(" Admin123! ");
+  await page.getByRole("button", { name: "Login" }).click();
+  await expect(page.getByText(accounts.nicholas.heading)).toBeVisible();
+  await page.getByRole("button", { name: "Logout" }).click();
+  await page.getByLabel("Email").fill("nicholas@workforce.local");
+  await page.getByLabel("Password").fill("Employee123!");
+  await page.getByRole("button", { name: "Login" }).click();
+  await expect(page.getByText("Incorrect email or password.")).toBeVisible();
+});
+
+test("old LocalStorage account data migrates without deleting schedules or leave", async ({ page }) => {
+  await page.goto(appUrl);
+  await page.evaluate(() => {
+    localStorage.setItem("scc-employees", JSON.stringify([{ id: "nicholas", email: "old@example.com", password: "scc2026" }]));
+    localStorage.setItem("scc-weekly-schedules", JSON.stringify({ "2026-07-20": { keep: true } }));
+    localStorage.setItem("scc-leave-requests", JSON.stringify([{ id: "leave-keep" }]));
+    localStorage.setItem("scc-session", JSON.stringify({ employeeId: "missing-user" }));
+  });
+  await page.reload();
+  const data = await page.evaluate(() => ({
+    employees: JSON.parse(localStorage.getItem("scc-employees")),
+    schedules: JSON.parse(localStorage.getItem("scc-weekly-schedules")),
+    leaves: JSON.parse(localStorage.getItem("scc-leave-requests")),
+    session: localStorage.getItem("scc-session")
+  }));
+  expect(data.employees.find((account) => account.id === "nicholas").password).toBe("Admin123!");
+  expect(data.employees.find((account) => account.id === "jordan").password).toBe("Employee123!");
+  expect(data.schedules["2026-07-20"].keep).toBe(true);
+  expect(data.leaves[0].id).toBe("leave-keep");
+  expect(data.session).toBeNull();
+  await page.getByLabel("Email").fill("nicholas@workforce.local");
+  await page.getByLabel("Password").fill("Admin123!");
+  await page.getByRole("button", { name: "Login" }).click();
+  await expect(page.getByText(accounts.nicholas.heading)).toBeVisible();
 });
 
 test("week navigation, draft save, copy previous, clear, export and invalid import work", async ({ page }) => {

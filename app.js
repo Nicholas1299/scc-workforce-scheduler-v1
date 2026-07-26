@@ -9,11 +9,11 @@
     session: "scc-session",
     version: "scc-app-version"
   };
-  var APP_VERSION = "1.0.0";
+  var APP_VERSION = "1.0.1";
   var EMPLOYEES = [
-    { id: "nicholas", name: "Nicholas", email: "nicholas@workforce.local", role: "Admin", password: "scc2026" },
-    { id: "jordan", name: "Jordan", email: "jordan@workforce.local", role: "Employee", password: "scc2026" },
-    { id: "amiru", name: "Amiru", email: "amiru@workforce.local", role: "Employee", password: "scc2026" }
+    { id: "nicholas", name: "Nicholas", email: "nicholas@workforce.local", role: "Admin", password: "Admin123!" },
+    { id: "jordan", name: "Jordan", email: "jordan@workforce.local", role: "Employee", password: "Employee123!" },
+    { id: "amiru", name: "Amiru", email: "amiru@workforce.local", role: "Employee", password: "Employee123!" }
   ];
   var DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   var DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -28,7 +28,6 @@
     leave: { label: "Leave" },
     custom: { label: "Custom Shift" }
   };
-  var PASSWORD = "scc2026";
   var state = {
     session: null,
     schedules: {},
@@ -89,7 +88,7 @@
     localStorage.setItem(key, JSON.stringify(value));
   }
   function initStorage() {
-    if (!safeRead(STORAGE_KEYS.employees, null)) write(STORAGE_KEYS.employees, EMPLOYEES.map(stripPassword));
+    migrateAuthRecords();
     if (!safeRead(STORAGE_KEYS.templates, null)) write(STORAGE_KEYS.templates, SHIFT_TEMPLATES);
     localStorage.setItem(STORAGE_KEYS.version, APP_VERSION);
     state.schedules = safeRead(STORAGE_KEYS.schedules, {});
@@ -98,6 +97,43 @@
   }
   function stripPassword(emp) {
     return { id: emp.id, name: emp.name, email: emp.email, role: emp.role };
+  }
+  function accountRecord(emp) {
+    var record = stripPassword(emp);
+    record.password = emp.password;
+    return record;
+  }
+  function migrateAuthRecords() {
+    var migrated = EMPLOYEES.map(accountRecord);
+    write(STORAGE_KEYS.employees, migrated);
+    var session = safeRead(STORAGE_KEYS.session, null);
+    if (session && !EMPLOYEES.some(function (emp) { return emp.id === session.employeeId; })) {
+      localStorage.removeItem(STORAGE_KEYS.session);
+    }
+  }
+  function accounts() {
+    var saved = safeRead(STORAGE_KEYS.employees, null);
+    if (!Array.isArray(saved)) {
+      migrateAuthRecords();
+      saved = safeRead(STORAGE_KEYS.employees, []);
+    }
+    return EMPLOYEES.map(function (seed) {
+      var stored = saved.find(function (emp) { return emp && emp.id === seed.id; }) || {};
+      return {
+        id: seed.id,
+        name: seed.name,
+        email: String(stored.email || seed.email).trim().toLowerCase(),
+        role: seed.role,
+        password: seed.password
+      };
+    });
+  }
+  function authenticate(email, password) {
+    var normalizedEmail = String(email || "").trim().toLowerCase();
+    var normalizedPassword = String(password || "").trim();
+    return accounts().find(function (account) {
+      return account.email.toLowerCase() === normalizedEmail && account.password === normalizedPassword;
+    }) || null;
   }
   function currentUser() {
     if (!state.session) return null;
@@ -124,7 +160,30 @@
   function getSchedule() {
     var key = state.selectedWeekStart;
     if (!state.schedules[key]) state.schedules[key] = newWeek(key);
+    state.schedules[key] = normalizeSchedule(state.schedules[key], key);
     return state.schedules[key];
+  }
+  function normalizeSchedule(schedule, weekStartKey) {
+    var clean = schedule && typeof schedule === "object" ? schedule : {};
+    clean.id = clean.id || weekStartKey;
+    clean.weekStart = weekStartKey;
+    clean.weekType = clean.weekType === "WEEK_B" ? "WEEK_B" : "WEEK_A";
+    clean.weekAOffEmployee = EMPLOYEES.some(function (emp) { return emp.id === clean.weekAOffEmployee; }) ? clean.weekAOffEmployee : "nicholas";
+    clean.status = clean.status === "Published" ? "Published" : "Draft";
+    clean.updatedAt = clean.updatedAt || new Date().toISOString();
+    clean.shifts = clean.shifts && typeof clean.shifts === "object" ? clean.shifts : {};
+    EMPLOYEES.forEach(function (emp) {
+      if (!Array.isArray(clean.shifts[emp.id])) clean.shifts[emp.id] = [];
+      for (var i = 0; i < DAYS.length; i += 1) {
+        var shift = clean.shifts[emp.id][i];
+        clean.shifts[emp.id][i] = shift && typeof shift === "object" ? {
+          type: shift.type || "",
+          start: shift.start || "",
+          end: shift.end || ""
+        } : blankShift();
+      }
+    });
+    return clean;
   }
   function saveSchedule(schedule, status) {
     schedule.status = status || schedule.status || "Draft";
@@ -295,7 +354,7 @@
     bindEvents();
   }
   function loginHtml() {
-    return '<main class="login-wrap"><section class="login-panel"><h1>SCC Workforce Scheduler V1</h1><p>Sign in to view or manage the weekly roster.</p><form id="login-form"><div class="form-row"><label for="email">Email</label><input id="email" type="email" autocomplete="username" required></div><div class="form-row"><label for="password">Password</label><div class="password-line"><input id="password" type="password" autocomplete="current-password" required><button type="button" id="toggle-password">Show</button></div></div><div id="login-error"></div><button class="primary" type="submit">Login</button></form></section></main>';
+    return '<main class="login-wrap"><section class="login-panel"><h1>SCC Workforce Scheduler V1</h1><p>Sign in to view or manage the weekly roster.</p><form id="login-form"><div class="form-row"><label for="email">Email</label><input id="email" type="email" autocomplete="username" required></div><div class="form-row"><label for="password">Password</label><div class="password-line"><input id="password" type="password" autocomplete="current-password" required><button type="button" id="toggle-password">Show</button></div><p class="field-note">Leading and trailing password spaces are ignored.</p></div><div id="login-error"></div><button class="primary" type="submit">Login</button></form></section></main>';
   }
   function appHtml(user) {
     var schedule = getSchedule();
@@ -363,11 +422,11 @@
     if (login) {
       login.addEventListener("submit", function (e) {
         e.preventDefault();
-        var email = document.getElementById("email").value.trim().toLowerCase();
+        var email = document.getElementById("email").value;
         var password = document.getElementById("password").value;
-        var emp = EMPLOYEES.find(function (x) { return x.email === email && password === PASSWORD; });
+        var emp = authenticate(email, password);
         if (!emp) {
-          document.getElementById("login-error").innerHTML = '<div class="error">Invalid email or password.</div>';
+          document.getElementById("login-error").innerHTML = '<div class="error">Incorrect email or password.</div>';
           return;
         }
         state.session = { employeeId: emp.id, createdAt: new Date().toISOString() };
@@ -535,11 +594,14 @@
     createId: createId,
     weekStart: weekStart,
     newWeek: newWeek,
+    normalizeSchedule: normalizeSchedule,
     validateSchedule: validateSchedule,
     shiftTimes: shiftTimes,
     EMPLOYEES: EMPLOYEES,
     DAYS: DAYS,
     STORAGE_KEYS: STORAGE_KEYS
+    , authenticate: authenticate
+    , migrateAuthRecords: migrateAuthRecords
   };
   initStorage();
   render();

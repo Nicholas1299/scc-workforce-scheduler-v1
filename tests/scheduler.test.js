@@ -5,8 +5,8 @@ const vm = require("vm");
 
 const appSource = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
 
-function loadScheduler(cryptoValue) {
-  const store = {};
+function loadScheduler(cryptoValue, initialStore = {}) {
+  const store = { ...initialStore };
   const appNode = { innerHTML: "" };
   const context = {
     console,
@@ -31,7 +31,7 @@ function loadScheduler(cryptoValue) {
   context.window.document = context.document;
   context.window.localStorage = context.localStorage;
   vm.runInNewContext(appSource, context);
-  return context.window.SCCScheduler;
+  return { scheduler: context.window.SCCScheduler, store };
 }
 
 function applyShift(schedule, emp, day, type, start, end) {
@@ -68,7 +68,7 @@ function validWeekA(scheduler) {
   return s;
 }
 
-const scheduler = loadScheduler({
+const { scheduler } = loadScheduler({
   randomUUID() { return "uuid-value"; },
   getRandomValues(bytes) { for (let i = 0; i < bytes.length; i += 1) bytes[i] = i; return bytes; }
 });
@@ -104,13 +104,36 @@ result = scheduler.validateSchedule(badOff);
 assert.strictEqual(result.validForPublish, false);
 assert(result.messages.some((m) => m.includes("wrong number of OFF days for WEEK B")));
 
-const randomUuidScheduler = loadScheduler({ randomUUID() { return "abc"; } });
+const { scheduler: randomUuidScheduler } = loadScheduler({ randomUUID() { return "abc"; } });
 assert.strictEqual(randomUuidScheduler.createId("x"), "x-abc");
-const getRandomValuesScheduler = loadScheduler({
+const { scheduler: getRandomValuesScheduler } = loadScheduler({
   getRandomValues(bytes) { for (let i = 0; i < bytes.length; i += 1) bytes[i] = 15; return bytes; }
 });
 assert(/^x-0f0f/.test(getRandomValuesScheduler.createId("x")));
-const noCryptoScheduler = loadScheduler(null);
+const { scheduler: noCryptoScheduler } = loadScheduler(null);
 assert(/^x-/.test(noCryptoScheduler.createId("x")));
+
+assert.strictEqual(scheduler.authenticate("nicholas@workforce.local", "Admin123!").id, "nicholas");
+assert.strictEqual(scheduler.authenticate(" jordan@WORKFORCE.local ", "Employee123!").id, "jordan");
+assert.strictEqual(scheduler.authenticate("amiru@workforce.local", " Employee123! ").id, "amiru");
+assert.strictEqual(scheduler.authenticate("nicholas@workforce.local", "Employee123!"), null);
+
+const oldSchedules = { "2026-07-20": { saved: true } };
+const oldLeaves = [{ id: "leave-1" }];
+const oldTemplates = { custom: true };
+const migrated = loadScheduler(null, {
+  "scc-employees": JSON.stringify([{ id: "nicholas", email: "old@example.com", password: "scc2026" }]),
+  "scc-weekly-schedules": JSON.stringify(oldSchedules),
+  "scc-leave-requests": JSON.stringify(oldLeaves),
+  "scc-shift-templates": JSON.stringify(oldTemplates),
+  "scc-session": JSON.stringify({ employeeId: "removed-user" })
+});
+const migratedAccounts = JSON.parse(migrated.store["scc-employees"]);
+assert.strictEqual(migratedAccounts.find((account) => account.id === "nicholas").password, "Admin123!");
+assert.strictEqual(migratedAccounts.find((account) => account.id === "jordan").password, "Employee123!");
+assert.deepStrictEqual(JSON.parse(migrated.store["scc-weekly-schedules"]), oldSchedules);
+assert.deepStrictEqual(JSON.parse(migrated.store["scc-leave-requests"]), oldLeaves);
+assert.deepStrictEqual(JSON.parse(migrated.store["scc-shift-templates"]), oldTemplates);
+assert.strictEqual(Object.prototype.hasOwnProperty.call(migrated.store, "scc-session"), false);
 
 console.log("scheduler.test.js passed");
