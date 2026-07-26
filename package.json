@@ -1,0 +1,16 @@
+{
+  "name": "scc-workforce-scheduler-v1",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SCC Workforce Scheduler V1",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "test": "node tests/scheduler.test.js",
+    "start": "node ./node_modules/http-server/bin/http-server . -p 4826 -c-1",
+    "playwright": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.2",
+    "http-server": "^14.1.1"
+  }
+}
