@@ -4,7 +4,7 @@ const path = require("path");
 
 const email = "nicholas@workforce.local";
 const password = "scc2026";
-const appUrl = pathToFileURL(path.join(__dirname, "..", "..", "index.html")).href;
+const appUrl = process.env.APP_URL || pathToFileURL(path.join(__dirname, "..", "..", "index.html")).href;
 
 async function login(page) {
   await page.goto(appUrl);
